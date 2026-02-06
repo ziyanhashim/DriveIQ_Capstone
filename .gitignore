@@ -1,0 +1,42 @@
+# Large Data Files
+data/raw/
+data/processed/
+data/features/
+!data/sample/
+
+# Videos
+*.mp4
+*.avi
+*.mov
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.Python
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints
+
+# IDEs
+.idea/
+.vscode/
+
+# Results (keep summaries)
+results/**/*.csv
+!results/**/model_comparison.csv
+
+# Models
+models/saved_models/*.pkl
+models/saved_models/*.h5
+
+# System
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+*.key
