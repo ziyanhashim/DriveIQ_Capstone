@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Phase 2: Normal Profile & Anomaly Detection
+Phase 2: Normal Profile & Anomaly Detection (FIXED)
 Create a baseline "normal driving" profile and measure deviation from it
 """
 
@@ -9,8 +9,6 @@ import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 import seaborn as sns
-from scipy import stats
-from scipy.spatial.distance import mahalanobis
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import IsolationForest
@@ -60,23 +58,22 @@ class NormalProfileDetector:
         print("Creating Normal Driving Profile")
         print("="*60)
         
-        # Filter only Normal windows
-        if 'label' in df.columns:
-            normal_df = df[df['label'] == 0].copy()
-        elif 'behavior' in df.columns:
-            normal_df = df[df['behavior'] == 'Normal'].copy()
-        else:
-            raise ValueError("No label/behavior column found")
+        # Filter only Normal windows (label == 0)
+        if 'label' not in df.columns:
+            raise ValueError("No 'label' column found")
+        
+        normal_df = df[df['label'] == 0].copy()
         
         print(f"\nNormal windows: {len(normal_df)}")
-        print(f"Non-normal windows: {len(df) - len(normal_df)}")
+        print(f"Drowsy windows: {len(df[df['label'] == 1])}")
+        print(f"Aggressive windows: {len(df[df['label'] == 2])}")
         
-        # Select features
+        # Select features (only _mean features in your data)
         feature_cols = [col for col in df.columns 
-                       if col.endswith('_mean') or col.endswith('_std') 
-                       or col.endswith('_min') or col.endswith('_max')]
+                       if col not in ['label'] and df[col].dtype in ['float64', 'int64']]
         
         self.feature_columns = feature_cols
+        print(f"\nUsing {len(feature_cols)} features")
         
         # Extract normal features
         X_normal = normal_df[feature_cols].copy()
@@ -118,17 +115,17 @@ class NormalProfileDetector:
             )
             self.normal_profile.fit(X_scaled)
         
-        print(f"✓ Normal profile created using {self.method}")
+        print(f"\n✓ Normal profile created using {self.method}")
         
         # Print summary statistics
-        print("\nNormal Profile Summary:")
-        print("-" * 60)
-        for col in feature_cols[:5]:  # Show first 5 features
-            if self.method == 'mahalanobis':
+        if self.method == 'mahalanobis':
+            print("\nNormal Profile Summary (first 5 features):")
+            print("-" * 60)
+            for i, col in enumerate(feature_cols[:5]):
                 mean = self.normal_profile['mean'][col]
                 std = self.normal_profile['std'][col]
                 print(f"  {col[:40]:40s}: {mean:8.3f} ± {std:6.3f}")
-        print("  ...")
+            print("  ...")
         
         return self.normal_profile
     
@@ -195,16 +192,12 @@ class NormalProfileDetector:
         print("Anomaly Score Analysis by Behavior")
         print("="*60)
         
-        # Get behavior column
-        behavior_col = 'label' if 'label' in df.columns else 'behavior'
-        
-        if behavior_col == 'label':
-            behavior_map = {0: 'Normal', 1: 'Drowsy', 2: 'Aggressive'}
-            df['behavior_name'] = df['label'].map(behavior_map)
-            behavior_col = 'behavior_name'
+        # Map labels to behavior names
+        behavior_map = {0: 'Normal', 1: 'Drowsy', 2: 'Aggressive'}
+        df['behavior_name'] = df['label'].map(behavior_map)
         
         # Calculate statistics by behavior
-        results = df.groupby(behavior_col)['anomaly_score_normalized'].agg([
+        results = df.groupby('behavior_name')['anomaly_score_normalized'].agg([
             'count', 'mean', 'std', 'min', 'max'
         ]).round(2)
         
@@ -213,8 +206,11 @@ class NormalProfileDetector:
         # Percentage of high anomaly scores by behavior
         print("\n% of Windows with High Anomaly (score > 70):")
         high_anomaly = df[df['anomaly_score_normalized'] > 70]
-        pct = high_anomaly.groupby(behavior_col).size() / df.groupby(behavior_col).size() * 100
-        print(pct.round(1))
+        if len(high_anomaly) > 0:
+            pct = high_anomaly.groupby('behavior_name').size() / df.groupby('behavior_name').size() * 100
+            print(pct.round(1))
+        else:
+            print("  No windows with score > 70")
         
         return results
     
@@ -223,17 +219,15 @@ class NormalProfileDetector:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        behavior_col = 'label' if 'label' in df.columns else 'behavior'
-        if behavior_col == 'label':
-            behavior_map = {0: 'Normal', 1: 'Drowsy', 2: 'Aggressive'}
-            df['behavior_name'] = df['label'].map(behavior_map)
-            behavior_col = 'behavior_name'
+        # Map labels to behavior names
+        behavior_map = {0: 'Normal', 1: 'Drowsy', 2: 'Aggressive'}
+        df['behavior_name'] = df['label'].map(behavior_map)
         
         # 1. Distribution of anomaly scores by behavior
         plt.figure(figsize=(12, 6))
         
-        for behavior in df[behavior_col].unique():
-            data = df[df[behavior_col] == behavior]['anomaly_score_normalized']
+        for behavior in df['behavior_name'].unique():
+            data = df[df['behavior_name'] == behavior]['anomaly_score_normalized']
             plt.hist(data, bins=30, alpha=0.5, label=behavior)
         
         plt.xlabel('Anomaly Score (0-100)')
@@ -247,7 +241,7 @@ class NormalProfileDetector:
         
         # 2. Box plot
         plt.figure(figsize=(10, 6))
-        df.boxplot(column='anomaly_score_normalized', by=behavior_col)
+        df.boxplot(column='anomaly_score_normalized', by='behavior_name')
         plt.xlabel('Behavior')
         plt.ylabel('Anomaly Score')
         plt.title('Anomaly Scores by Behavior Type')
@@ -265,12 +259,13 @@ class NormalProfileDetector:
         print(f"\n{n} Most Anomalous Windows:")
         print("-" * 80)
         
-        behavior_col = 'label' if 'label' in df.columns else 'behavior'
+        behavior_map = {0: 'Normal', 1: 'Drowsy', 2: 'Aggressive'}
         
         for idx, row in top_anomalies.iterrows():
-            behavior = row.get('behavior', row.get('label', 'Unknown'))
+            label = row['label']
+            behavior_name = behavior_map.get(label, f'Unknown({label})')
             score = row['anomaly_score_normalized']
-            print(f"  Window {idx}: {behavior:12s} | Anomaly Score: {score:.1f}")
+            print(f"  Window {idx}: {behavior_name:12s} | Anomaly Score: {score:.1f}")
         
         return top_anomalies
 
@@ -301,6 +296,14 @@ def main():
     # Load data
     motor_path = input("\nMotor window features CSV: ").strip()
     secondary_path = input("Secondary window features CSV: ").strip()
+    
+    # Check files exist
+    if not Path(motor_path).exists():
+        print(f"ERROR: File not found: {motor_path}")
+        return
+    if not Path(secondary_path).exists():
+        print(f"ERROR: File not found: {secondary_path}")
+        return
     
     # Initialize detector
     detector = NormalProfileDetector(method=method)
